@@ -2,6 +2,8 @@ import sys
 import io
 import os
 import json
+import re
+import pickle
 import threading
 from difflib import SequenceMatcher
 from tkinter import filedialog, messagebox
@@ -14,7 +16,7 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-# Fix encoding for Windows executables (PyInstaller noconsole mode)
+# Ensure correct encoding for PyInstaller --noconsole builds
 if sys.stdout is not None:
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 if sys.stderr is not None:
@@ -22,7 +24,6 @@ if sys.stderr is not None:
 
 CONFIG_FILE = "settings.json"
 
-# Localization dictionary
 LANG = {
     "en": {
         "title_settings": "Settings",
@@ -48,35 +49,21 @@ LANG = {
         "err_no_keys": "❌ Error: Settings missing! Click ⚙.",
         "header_not_found": "\n⚠️ TRACKS NOT FOUND (ADD MANUALLY):",
         "success_sp": "\n✨ DONE! Playlist created in Spotify.",
-        "success_yt": "\n✨ DONE! Playlist synced to YouTube.",
-        "search": "Found {0} tracks. Starting sync...",
+        "success_yt": "\n✨ DONE! Playlist created in YouTube.",
+        "search": "Found {0} tracks. Starting transfer...",
         "not_found_file": "YouTube JSON file not found",
         "browse": "Browse",
-        "err_quota": "⛔ YOUTUBE QUOTA EXCEEDED!\nDaily limit reached (~60 songs).\nDONT WORRY: Run the app again tomorrow, it will continue from where it stopped!",
-        "skip": "⏩ Skipped (Already exists): {0}",
-        "resume_info": "ℹ️ Smart Resume: Found existing playlist, checking for duplicates...",
-        "help_text": """=== SETUP INSTRUCTIONS ===
+        "err_quota": "⛔ YOUTUBE QUOTA EXCEEDED!\nDaily limit reached (~60 songs). Try again tomorrow.",
+        "help_text": """1. SPOTIFY:
+- Go to developer.spotify.com/dashboard
+- Create App -> Settings -> Redirect URIs: http://127.0.0.1:8888/callback
+- Copy Client ID & Secret.
 
-1. SPOTIFY (Get ID and Secret):
-   - Go to: developer.spotify.com/dashboard
-   - Login and click "Create App".
-   - In Settings find "Redirect URIs".
-   - Paste: http://127.0.0.1:8888/callback
-   - Click Save.
-   - Copy "Client ID" and "Client Secret".
-
-2. YOUTUBE (Get JSON file):
-   - Go to: console.cloud.google.com
-   - Create a New Project.
-   - Enable "YouTube Data API v3".
-   - Create Credentials -> OAuth client ID -> Desktop App.
-   - Download the JSON file.
-
-3. START:
-   - Save settings.
-   - Click "Connect Accounts".
-   - Login to Spotify and Google.
-"""
+2. YOUTUBE:
+- Go to console.cloud.google.com
+- Enable "YouTube Data API v3"
+- Credentials -> Create OAuth Client ID -> Desktop App
+- Download JSON file."""
     },
     "ru": {
         "title_settings": "Настройки",
@@ -102,14 +89,20 @@ LANG = {
         "err_no_keys": "❌ Ошибка: Не заполнены настройки! Нажмите ⚙.",
         "header_not_found": "\n⚠️ ЭТИ ТРЕКИ НЕ НАЙДЕНЫ (ДОБАВЬТЕ ВРУЧНУЮ):",
         "success_sp": "\n✨ ГОТОВО! Плейлист создан в Spotify.",
-        "success_yt": "\n✨ ГОТОВО! Плейлист синхронизирован в YouTube.",
-        "search": "Найдено {0} треков. Начинаю синхронизацию...",
+        "success_yt": "\n✨ ГОТОВО! Плейлист создан в YouTube.",
+        "search": "Найдено {0} треков. Начинаю перенос...",
         "not_found_file": "Не найден файл JSON для YouTube",
         "browse": "Обзор",
-        "err_quota": "⛔ ЛИМИТ YOUTUBE ИСЧЕРПАН!\nДневной лимит (~60 песен) достигнут.\nНЕ ВОЛНУЙТЕСЬ: Запустите программу завтра, она продолжит с того же места!",
-        "skip": "⏩ Пропущено (Уже есть): {0}",
-        "resume_info": "ℹ️ Умное продолжение: Нашел существующий плейлист, проверяю дубликаты...",
-        "help_text": "Инструкция..."
+        "err_quota": "⛔ ЛИМИТ YOUTUBE ИСЧЕРПАН!\nДневной лимит (~60 песен) достигнут. Попробуйте завтра.",
+        "help_text": """1. SPOTIFY:
+- На сайте developer.spotify.com создайте приложение.
+- Redirect URI: http://127.0.0.1:8888/callback
+- Скопіюйте ID и Secret.
+
+2. YOUTUBE:
+- На console.cloud.google.com включите YouTube Data API v3.
+- Создайте OAuth Client ID (Desktop App).
+- Скачайте JSON."""
     },
     "ua": {
         "title_settings": "Налаштування",
@@ -135,14 +128,20 @@ LANG = {
         "err_no_keys": "❌ Помилка: Не заповнені налаштування! Натисніть ⚙.",
         "header_not_found": "\n⚠️ ЦІ ТРЕКИ НЕ ЗНАЙДЕНО (ДОДАЙТЕ ВРУЧНУ):",
         "success_sp": "\n✨ ГОТОВО! Плейлист створено в Spotify.",
-        "success_yt": "\n✨ ГОТОВО! Плейлист синхронізовано в YouTube.",
-        "search": "Знайдено {0} треків. Починаю синхронізацію...",
+        "success_yt": "\n✨ ГОТОВО! Плейлист створено в YouTube.",
+        "search": "Знайдено {0} треків. Починаю перенесення...",
         "not_found_file": "Не знайдено файл JSON для YouTube",
         "browse": "Огляд",
-        "err_quota": "⛔ ЛІМІТ YOUTUBE ВИЧЕРПАНО!\nДенний ліміт (~60 пісень) досягнуто.\nНЕ ХВИЛЮЙТЕСЬ: Запустіть програму завтра, вона продовжить з того ж місця!",
-        "skip": "⏩ Пропущено (Вже є): {0}",
-        "resume_info": "ℹ️ Розумне продовження: Знайшов існуючий плейлист, перевіряю дублікати...",
-        "help_text": "Інструкція..."
+        "err_quota": "⛔ ЛІМІТ YOUTUBE ВИЧЕРПАНО!\nДенний ліміт (~60 пісень) досягнуто. Спробуйте завтра.",
+        "help_text": """1. SPOTIFY:
+- На сайті developer.spotify.com створіть додаток.
+- Redirect URI: http://127.0.0.1:8888/callback
+- Скопіюйте ID та Secret.
+
+2. YOUTUBE:
+- На console.cloud.google.com увімкніть YouTube Data API v3.
+- Створіть OAuth Client ID (Desktop App).
+- Завантажте JSON."""
     }
 }
 
@@ -154,16 +153,19 @@ def load_config():
                 data = json.load(f)
                 default.update(data)
                 return default
-        except: pass
+        except Exception:
+            pass
     return default
 
 def save_config(data):
-    with open(CONFIG_FILE, "w") as f: json.dump(data, f)
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(data, f)
 
 def tr(key):
     cfg = load_config()
     lang_code = cfg.get("lang", "en")
     return LANG.get(lang_code, LANG["en"]).get(key, key)
+
 
 class MusicLogic:
     def __init__(self, log_callback):
@@ -188,7 +190,7 @@ class MusicLogic:
                 redirect_uri=self.config["sp_redirect"],
                 scope="playlist-read-private playlist-modify-public playlist-modify-private"
             ))
-            self.sp.current_user() 
+            self.sp.current_user()
             
             self.log(tr("log_connect_yt"))
             self.yt = self._auth_youtube()
@@ -203,16 +205,28 @@ class MusicLogic:
     def _auth_youtube(self):
         creds = None
         if os.path.exists('token_yt.pickle'):
-            with open('token_yt.pickle', 'rb') as token: creds = pickle.load(token)
+            try:
+                with open('token_yt.pickle', 'rb') as token:
+                    creds = pickle.load(token)
+            except Exception:
+                creds = None
+        
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                if not os.path.exists(self.config["yt_json_path"]): raise FileNotFoundError(tr("not_found_file"))
+                try:
+                    creds.refresh(Request())
+                except Exception:
+                    creds = None
+            
+            if not creds:
+                if not os.path.exists(self.config["yt_json_path"]):
+                    raise FileNotFoundError(tr("not_found_file"))
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.config["yt_json_path"], ['https://www.googleapis.com/auth/youtube.force-ssl'])
                 creds = flow.run_local_server(port=0)
-            with open('token_yt.pickle', 'wb') as token: pickle.dump(creds, token)
+            
+            with open('token_yt.pickle', 'wb') as token:
+                pickle.dump(creds, token)
         return build('youtube', 'v3', credentials=creds)
 
     def get_user_playlists(self, service):
@@ -220,27 +234,33 @@ class MusicLogic:
         try:
             if service == 'spotify':
                 results = self.sp.current_user_playlists(limit=50)
-                for item in results['items']: playlists[item['name']] = item['id']
+                for item in results['items']:
+                    playlists[item['name']] = item['id']
             elif service == 'youtube':
                 request = self.yt.playlists().list(part="snippet", mine=True, maxResults=50)
                 response = request.execute()
-                for item in response['items']: playlists[item['snippet']['title']] = item['id']
+                for item in response['items']:
+                    playlists[item['snippet']['title']] = item['id']
             return playlists
         except HttpError as e:
-            if "quotaExceeded" in str(e): self.log("\n" + tr("err_quota"))
-            else: self.log(f"Error: {e}")
+            if "quotaExceeded" in str(e):
+                self.log("\n" + tr("err_quota"))
+            else:
+                self.log(f"Error: {e}")
             return {}
         except Exception as e:
-            self.log(f"Error: {e}"); return {}
+            self.log(f"Error: {e}")
+            return {}
 
     def _clean_string(self, text):
         if not text: return ""
         text = text.lower()
-        text = re.sub(r'^\d+\s*[-\.]\s*', '', text) 
-        text = re.sub(r'\(.*?\)', '', text) 
+        text = re.sub(r'^\d+\s*[-\.]\s*', '', text)
+        text = re.sub(r'\(.*?\)', '', text)
         text = re.sub(r'\[.*?\]', '', text)
         bad_words = ["official video", "official audio", "lyrics", "visualizer", "hd", "4k", "hq", "prod.", "official"]
-        for w in bad_words: text = text.replace(w, "")
+        for w in bad_words:
+            text = text.replace(w, "")
         text = re.sub(r'(ft\.|feat\.|featuring).*', '', text)
         return text.strip()
 
@@ -263,7 +283,8 @@ class MusicLogic:
             artist_match = False
             if artist:
                 art_sim = self._similarity(artist, sp_artist)
-                if art_sim > 0.4 or (artist in sp_artist) or (sp_artist in artist): artist_match = True
+                if art_sim > 0.4 or (artist in sp_artist) or (sp_artist in artist):
+                    artist_match = True
             
             if strict:
                 if artist_match and name_sim >= 0.5: return track
@@ -271,12 +292,12 @@ class MusicLogic:
                 if name_sim >= 0.7: return track
                 if artist and artist in sp_name: return track
             return None
-        except: return None
+        except Exception:
+            return None
 
     def run_transfer(self, mode, playlist_id, playlist_name):
         failed_tracks = []
         
-        # YouTube -> Spotify
         if mode == 'yt_to_sp':
             self.log(f"\n--- YouTube ({playlist_name}) -> Spotify ---")
             videos = []
@@ -293,7 +314,8 @@ class MusicLogic:
                     next_page = resp.get('nextPageToken')
                     if not next_page: break
             except Exception as e:
-                self.log(f"❌ YouTube Error: {e}"); return
+                self.log(f"❌ YouTube Error: {e}")
+                return
 
             self.log(tr("search").format(len(videos)))
             uris = []
@@ -310,8 +332,10 @@ class MusicLogic:
                     track_g = self._clean_string(raw_t)
 
                 found = self._search_spotify_smart(f"artist:{artist_g} track:{track_g}", artist_g, track_g, True)
-                if not found: found = self._search_spotify_smart(f"{artist_g} {track_g}", artist_g, track_g, True)
-                if not found: found = self._search_spotify_smart(track_g, artist_g, track_g, False)
+                if not found:
+                    found = self._search_spotify_smart(f"{artist_g} {track_g}", artist_g, track_g, True)
+                if not found:
+                    found = self._search_spotify_smart(track_g, artist_g, track_g, False)
 
                 if found:
                     uris.append(found['uri'])
@@ -327,10 +351,11 @@ class MusicLogic:
                     for i in range(0, len(uris), 100):
                         self.sp.playlist_add_items(pl['id'], uris[i:i+100])
                     self.log(tr("success_sp"))
-                except Exception as e: self.log(f"Error: {e}")
-            else: self.log("Nothing found.")
+                except Exception as e:
+                    self.log(f"Error: {e}")
+            else:
+                self.log("Nothing found.")
 
-        # Spotify -> YouTube (Smart Resume)
         elif mode == 'sp_to_yt':
             self.log(f"\n--- Spotify ({playlist_name}) -> YouTube ---")
             try:
@@ -339,64 +364,32 @@ class MusicLogic:
                 while res['next']:
                     res = self.sp.next(res)
                     tracks.extend([i['track'] for i in res['items'] if i['track']])
-            except Exception as e: self.log(f"❌ Spotify Error: {e}"); return
+            except Exception as e:
+                self.log(f"❌ Spotify Error: {e}")
+                return
 
             self.log(tr("search").format(len(tracks)))
             
-            target_pl_name = f"PlaylistMover: {playlist_name}"
             new_pl_id = None
-            existing_videos = []
-
-            # Check existing playlist
             try:
-                mine_req = self.yt.playlists().list(part="snippet,id", mine=True, maxResults=50)
-                mine_resp = mine_req.execute()
-                for pl in mine_resp.get('items', []):
-                    if pl['snippet']['title'] == target_pl_name:
-                        new_pl_id = pl['id']
-                        self.log(tr("resume_info"))
-                        break
-            except Exception: pass
+                new_pl = self.yt.playlists().insert(part='snippet,status', body={
+                    'snippet': {'title': f"PlaylistMover: {playlist_name}"},
+                    'status': {'privacyStatus': 'private'}
+                }).execute()
+                new_pl_id = new_pl['id']
+            except HttpError as e:
+                if "quotaExceeded" in str(e):
+                    self.log("\n" + tr("err_quota"))
+                    return
+                else:
+                    self.log(f"❌ YouTube Error: {e}")
+                    return
+            except Exception as e:
+                self.log(f"Error: {e}")
+                return
 
-            # Get existing videos to avoid duplicates
-            if new_pl_id:
-                try:
-                    next_pg = None
-                    while True:
-                        pl_items = self.yt.playlistItems().list(part="snippet", playlistId=new_pl_id, maxResults=50, pageToken=next_pg).execute()
-                        for item in pl_items.get('items', []):
-                            existing_videos.append(self._clean_string(item['snippet']['title']))
-                        next_pg = pl_items.get('nextPageToken')
-                        if not next_pg: break
-                except Exception: pass
-            else:
-                # Create new playlist
-                try:
-                    new_pl = self.yt.playlists().insert(part='snippet,status', body={
-                        'snippet': {'title': target_pl_name}, 'status': {'privacyStatus': 'private'}
-                    }).execute()
-                    new_pl_id = new_pl['id']
-                except HttpError as e:
-                    if "quotaExceeded" in str(e): self.log("\n" + tr("err_quota")); return
-                    else: self.log(f"❌ YouTube Error: {e}"); return
-
-            # Search and Add
             for t in tracks:
                 query = f"{t['artists'][0]['name']} - {t['name']}"
-                
-                # Check duplicates (Free)
-                clean_query = self._clean_string(query)
-                is_duplicate = False
-                for ex_title in existing_videos:
-                    if self._similarity(clean_query, ex_title) > 0.8:
-                        is_duplicate = True
-                        break
-                
-                if is_duplicate:
-                    self.log(tr("skip").format(t['name']))
-                    continue
-
-                # API Call (Costly)
                 try:
                     search = self.yt.search().list(q=query, part='id', maxResults=1, type='video').execute()
                     if search['items']:
@@ -405,27 +398,30 @@ class MusicLogic:
                             'snippet': {'playlistId': new_pl_id, 'resourceId': {'kind': 'youtube#video', 'videoId': vid}}
                         }).execute()
                         self.log(f"[+] {query}")
-                        existing_videos.append(clean_query)
                     else:
                         self.log(f"[-] NOT FOUND: {query}")
                         failed_tracks.append(query)
                 except HttpError as e:
                     if "quotaExceeded" in str(e):
-                        self.log("\n" + tr("err_quota")); break
+                        self.log("\n" + tr("err_quota"))
+                        break
                     else:
-                        self.log(f"[!] API Error: {e}"); failed_tracks.append(query)
+                        self.log(f"[!] API Error: {e}")
+                        failed_tracks.append(query)
                 except Exception as e:
-                    self.log(f"[!] Error: {e}"); failed_tracks.append(query)
+                    self.log(f"[!] Error: {e}")
+                    failed_tracks.append(query)
             
             self.log(tr("success_yt"))
 
         if failed_tracks:
             self.log(tr("header_not_found"))
             self.log("-" * 40)
-            for fail in failed_tracks: self.log(f"• {fail}")
+            for fail in failed_tracks:
+                self.log(f"• {fail}")
             self.log("-" * 40)
 
-# --- GUI ---
+
 class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, parent):
         super().__init__(parent)
@@ -442,7 +438,6 @@ class SettingsWindow(ctk.CTkToplevel):
 
         config = load_config()
 
-        # Keys Tab
         ctk.CTkLabel(self.tab_keys, text="Spotify Client ID:").pack(anchor="w", padx=10)
         self.entry_sp_id = ctk.CTkEntry(self.tab_keys, width=400)
         self.entry_sp_id.insert(0, config.get("sp_id", ""))
@@ -466,17 +461,14 @@ class SettingsWindow(ctk.CTkToplevel):
         self.entry_yt_path.pack(side="left")
         ctk.CTkButton(self.frame_yt, text=tr("browse"), width=80, fg_color="#333", hover_color="#444", command=self.browse_file).pack(side="right", padx=5)
 
-        # Language Tab
         self.lang_var = ctk.StringVar(value=config.get("lang", "en"))
         ctk.CTkLabel(self.tab_lang, text="Language:", font=("Arial", 14)).pack(pady=20)
         ctk.CTkRadioButton(self.tab_lang, text="English", variable=self.lang_var, value="en").pack(pady=10)
         ctk.CTkRadioButton(self.tab_lang, text="Русский", variable=self.lang_var, value="ru").pack(pady=10)
         ctk.CTkRadioButton(self.tab_lang, text="Українська", variable=self.lang_var, value="ua").pack(pady=10)
 
-        # Save Button
         ctk.CTkButton(self, text=tr("save"), fg_color="#00A8E8", text_color="#1a1a1a", hover_color="#4CC9F0", font=("Arial", 13, "bold"), command=self.save_settings).pack(pady=10)
         
-        # Help Tab
         help_box = ctk.CTkTextbox(self.tab_help, width=450, height=400)
         help_box.pack(pady=5)
         help_box.insert("0.0", tr("help_text"))
@@ -500,6 +492,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.parent.refresh_ui_text()
         self.destroy()
 
+
 class SSK4SApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -516,13 +509,11 @@ class SSK4SApp(ctk.CTk):
         self.yt_playlists = {}
         self.sp_playlists = {}
         
-        # App Icon
         try:
             self.iconbitmap("PlaylistMover.ico") 
-        except:
-            pass # Skip if icon not found (for dev)
+        except Exception:
+            pass 
 
-        # Header
         self.header_frame = ctk.CTkFrame(self, height=60, fg_color="transparent")
         self.header_frame.pack(pady=20, fill="x")
         
@@ -532,7 +523,6 @@ class SSK4SApp(ctk.CTk):
         self.btn_settings = ctk.CTkButton(self.header_frame, text="⚙", width=40, height=40, fg_color="#333", hover_color="#444", command=self.open_settings)
         self.btn_settings.place(relx=0.92, rely=0.5, anchor="center")
 
-        # Controls
         self.btn_connect = ctk.CTkButton(self, text=tr("connect"), fg_color=self.col_sky, hover_color=self.col_sky_hover, text_color=self.text_on_sky, height=40, font=("Arial", 14, "bold"), command=self.start_connect)
         self.btn_connect.pack(pady=10)
 
@@ -587,15 +577,20 @@ class SSK4SApp(ctk.CTk):
 
     def on_source_change(self, value):
         if not self.yt_playlists and not self.sp_playlists: return
+        
+        target_list = self.yt_playlists if value == "YouTube" else self.sp_playlists
+        names = list(target_list.keys())
+        
+        if names:
+            self.combo_playlist.configure(values=names)
+            self.combo_var.set(names[0])
+        else:
+            self.combo_playlist.configure(values=[tr("combo_empty")])
+            self.combo_var.set(tr("combo_empty"))
+
         if value == "YouTube":
-            names = list(self.yt_playlists.keys())
-            self.combo_playlist.configure(values=names) if names else None
-            self.combo_var.set(names[0] if names else tr("combo_empty"))
             self.btn_start.configure(text=tr("btn_to_sp"))
         else:
-            names = list(self.sp_playlists.keys())
-            self.combo_playlist.configure(values=names) if names else None
-            self.combo_var.set(names[0] if names else tr("combo_empty"))
             self.btn_start.configure(text=tr("btn_to_yt"))
 
     def start_transfer(self):
