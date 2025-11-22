@@ -57,7 +57,7 @@ To use the app, you need to provide your own API keys from Spotify and Google. T
 ---
 
 ## ⚠️ Limitations
-*   **YouTube Quota:** Google allows free accounts to perform limited operations per day. You can transfer approximately **60-70 songs per day** from Spotify TO YouTube. But I was able to transfer my entire playlist of 319 songs.
+*   **YouTube Quota:** Google allows free accounts to perform limited operations per day. You can transfer approximately **60-70 songs per day** from Spotify TO YouTube.
 *   **Unlimited:** Transfers FROM YouTube TO Spotify are cheap on quota, so you can transfer thousands of songs.
 
 ## 🛠 Technologies
@@ -69,3 +69,4 @@ To use the app, you need to provide your own API keys from Spotify and Google. T
 ---
 
 *License: MIT*
+
